@@ -1,0 +1,472 @@
+\chapter{Water level Prediction based on Multi-Spectral Low-resolution Satellite Images }
+\label{chap-4-predict-water-body}
+\begin{ChapAbstract}
+In this chapter, we present our research on predicting the next MODIS image(s) on Tonle Sap lake, especially focusing on water body and shoreline of the lake, and then use this prediction to estimate the future water area of this lake.
+\end{ChapAbstract}
+
+\section{Introduction}
+Deep learning methods exhibit promising performances for the nearly related problem of our work: video frame prediction. However, the direct adoption of these methods may not yield a sufficient result in satellite image prediction, due to some limitations below:
+\begin{enumerate} 
+    \item Hydrological status is commonly an annually periodic phenomenon. In contrast, video frame prediction is much focused on objects' movements which usually occur in a short amount of time. Therefore, we need a paradigm which makes used of the periodic property of hydrological data in a more efficient manner.
+    \item These methods don't focus on lake's water body which is the main element of this work. A good forecasting in the land region around the lake incorporated with a bad prediction in lake' s water body may cheat us by some good metrics evaluated on the whole image, such as MSE, PSNR, but the final result may not be yielded as expected.
+\end{enumerate}
+In this chapter, we develop a model which uses the historical MODIS NDVI-band data until timesteps $t$ to predict the MODIS NDVI-band at timesteps $t+1$ with a greater concern for the boundary region of the lake. Our work builds on recent work on using RNNs on 2D sequence data and on using Attention mechanism on time-series data.
+
+Traditional recurrent neural networks only use a fixed-length sequence of \newline
+$(x_{t - l + 1}, x_{t - l + 2},\dots,x_{t})$, where $l$ is the sequence length to predict $x_{t + 1}$. It makes RNNs easy to suffer the vanishing gradient problem. Although some advanced RNNs, such as GRU, LSTM, \dots are proved to be capable of reducing this issue, the computational cost is still unnecessarily large. Indeed, the annual periodicity of hydrological status leads to the need of a long input sequence length (it should be at least 46, the number of our MODIS Terra and Aqua data in one year). Loading all of these sequences to GPU wastes a large amount of resources, because each element in an input sequence is used only one time in the forward pass, but GPU must remember them in its memory for the next training epoch.
+
+In order to address these limitations, we propose to use a neural network model which is the fusion of Convolutional LSTM (ConvLSTM) \cite{Shi2015ConvolutionalLN} and Attention mechanism. Instead of directly using a unique long sequence as input, our method divides historical data into multiple small/medium-length input sequences in both long-term and short-term time dependency. The ConvLSTM-based neural networks have the goal of extracting the latent representations of both long and short-term time dependency. Then the attention mechanism is adopted to summary these two temporal latent representations. Finally, a ConvLSTM is used to produce the final prediction.
+
+\section{Data}
+\subsection{Study Domain}
+This study focuses on the Tonle Sap lake, which is a seasonally inundated freshwater lake in the central low-lying territory of the Cambodia. Our study site was defined by a rectangular boundary of (13.53°N, 103.12°E), (12.42°N, 104.61°E). The Tonle Sap watershed usually experiences two monsoon periods, dry season from December to April and rainy from May to October \cite{article:Hydro-dam-A-nature-based-solution-or-an-ecological-problem}. This great lake functions as a natural reservoir for the Mekong River system during dry season, and regulates flood discharge during wet season. Flood pulse, as a succession of periodic flooding, is the most notable feature of the Tonle Sap Lake. During the dry season, a slow release of the lake water flows into the Mekong through the Tonle Sap River; then the lake is refilled by a reverse water flow from the Mekong during monsoon season, hence forming a globally unique hydrodynamic pattern in the Mekong watershed \cite{article:Socioeconomic-Analysis-Tonle-Sap}.
+
+\subsection{Satellite Observations}
+\label{subsection-used-data}
+The Moderate Resolution Imaging Spectroradiometer (MODIS), a hyperspectral earth-observing satellite sensor operated by the National Aeronautics and Space Administration (NASA), provides daily satellite coverage, and its VI data products are designed to provide consistent vegetation conditions with spatial resolution ranging from 250 m to 1 km. The 250 m resolution MODIS are Terra (MOD13Q1) and Aqua (MYD13Q1), are valuable source of data in hydrological research. Both data are 16-day composites and are released alternatively (MODIS Terra 's first product in a year is released on 1 Jan, whereas MODIS Aqua 's first product is release on 9 Jan). The combination of these two data provides us a 8-day time-series data, increasing the number of images per year to 46. In this work, we download both MODIS MOD13Q1 and MYD13Q1 data here\footnote{\url{https://modis.ornl.gov}}. Data are collected from 26/6/2002 (near the first released day of MYD13Q1 data) to 31/12/2017 in the Tonle Sap lake region. Finally, we have 714 images of size $513 \times 513$. We use first 576 images for training, 46 next images for validation and last 92 images for testing all baselines and proposed models.
+ 
+\section{Related Work}
+Our work builds on recent work in satellite image prediction, video frame prediction, and soft temporal attention that allows modelling the temporal periodicity of weather data.
+
+\textbf{Recurrent Neural Networks in Satellite Image Prediction:} Several pioneering approaches have explored the task of predicting the next satellite image(s) by neural networks. Shi et al. \cite{Shi2015ConvolutionalLN} used a combination of Recurrent Neural Networks and Convolutional Neural Networks to forecast short-term precipitation from temporal radar images. Racah et al. \cite{DBLP:journals/corr/RacahBMPP16} suggested an 3D convolutional auto-encoder (AE) model for extreme weather events detection using 27-years CAM-5 simulation model results.
+
+\textbf{Attention Mechanism in time-series Prediction:} To further imitate the human learning system, attention mechanisms were developed for several existing neural network architectures to determine the importance of different parts of the input during the learning process \cite{Bahdanau2015NeuralMT} \cite{DBLP:journals/corr/XuBKCCSZB15} \cite{DBLP:journals/corr/MnihHGK14} \cite{DBLP:journals/corr/ChenWCGXN15}. Few attempts have been made to employ attention functionality in LSTM in different time-series forecasting problems such as medial diagnosis \cite{DBLP:journals/corr/ChoiBSSS16} and weather forecast \cite{Riemer:2016:CFM:3045390.3045707}. Yao et al. \cite{DBLP:journals/corr/abs-1803-01254} consider the dynamic similarity between locations and propose an attention mechanism (STDN) for LSTM-connected CNNs. Although adding attention mechanism into recurrent architectures improves the performance and comprehensibility, it incurs high computational cost for the whole model (due to the usage of some dense matrices).
+
+This work is inspired by combining ConvLSTM \cite{Shi2015ConvolutionalLN} of Shi et al. and STDN \cite{DBLP:journals/corr/abs-1803-01254} of Yao et al. in order to propose a model that efficiently captures both long-term and short-term temporal dependency and periodicity of remote sensing image data.
+
+\section{Methodology}
+\subsection{Model}
+Our model mainly consists of 3 parts: the Short-Term Temporal Dependency, the Periodically Shifted Attention Mechanism and the Jointly Training.
+
+Here we define some parameters for our model:
+\begin{itemize}
+    \item $S$: The length of a period of data (in this work we use $S = 46$, because there are 46 MODIS images in a year, and a year is considered as a period),
+    \item $SL$: Input sequence length of short-term part,
+    \item $P$: The number of periods (years) used for attention mechanism,
+    \item $Q$: The number of relevant timesteps in a period (a year) taken into account the attention mechanism. $Q$ is prefered to be odd,
+    \item $FL$: The number of last recent images of timesteps $t$ used as short term-length features for input data of timesteps $t$,
+    \item $FH$: The number of previous periods of the period of the timesteps $t$. In these periods, the image, whose internal-period index is similar to the internal-period index of image at timesteps $t$ (or $t \% S$), is taken account to historical features for input data of timesteps $t$. All of these images have the same internal-period index: ($t-S, t-2 \times S,\dots, t-FH \times S$).
+\end{itemize}
+Let $W, H$ be the shape of an image, $X$ be the set of images from past to present.
+
+\subsubsection{Model input preparation}
+\label{model-input-prep}
+The model has four inputs, each input is a tensor. Two of them are used for short-term part and the remains are used for long-term part. These inputs can be described in detail as: At timesteps $t$, the label (predicted target) is the image at timesteps $t + 1$, whereas the inputs consist of (for simplicity, batch size is set to 1):
+\begin{itemize}
+    \item \textbf{short-term CNN feature} $X1$: a tensor with shape $(SL, W, H)$. Each $X1[i,:,:]$ is $X[t - SL + 1 + i]$ for $i$ in $[0, SL - 1]$,
+    \item \textbf{short-term LSTM feature} $X2$: a tensor with shape $(SL, W, H, FH+FL)$. For each $i$ in $[0, SL - 1]$, for each $j$ in $[0, FH - 1]$, $X2[i,:,:,j] = X[t - SL + 1 + i - (FH - j)*S]$; for each $j$ in $[0, FL - 1]$, $X_2[i,:,:,FH + j] = X[t - SL + i - FL + j + 2]$,
+    \item \textbf{long-term CNN feature} $X3$: a tensor with shape $(P, Q, H, W)$. For each $i$ in $[0, P - 1]$, for each $j$ in $[0, Q - 1]$, $X3[i,j,:,:] = X[t - (P - i)*S + j - Q/2]$, 
+    \item \textbf{long-term LSTM feature} $X4$: a tensor with shape $P, Q, H, W, FH + FL$. For each $i$ in $[0, P - 1]$, for each $j$ in $[0, Q - 1]$, let $t_{i, j} = t - (P - i)*S + j - Q/2$, and $X4[i,j, :, :, :]$ is gathered in the same manner as the short-term LSTM feature $X2$ at timesteps $t_{i,j}$ ($X2[t_{i,j},:,:,:]$). 
+\end{itemize}
+Notice that the smallest image input index is $t - (FH + P)*S - Q/2$, so the smallest timesteps $t$ to be able to generate an input is $t_0 = (FH + P)*S + Q/2$.
+
+\textbf{Concrete Example: }
+To clarify the definition of those four inputs, we consider the toy example below. Let $S = 46, SL = 7, P = 3, Q = 3, FL = 4, FH = 3$. $t = t_0 = (FH + P)*S + Q/2 = 277$.
+Four inputs of timesteps $t$ are (we only mention the timesteps index):
+\begin{itemize}
+    \item \textbf{short-term CNN feature:} $X1$ = [270, 271, 272, 273, 274, 275, 276] 
+    (see table \ref{tab:Example-short-term-CNN-feature})
+    \item \textbf{short-term LSTM feature:} 
+    (see table \ref{tab:Example-short-term-LSTM}) \newline
+    \[ \begin{array}{ccccccc}
+        \mbox{$X2 = \big[$} \big[ 133, & 179, & 225, & 267, & 268, & 269, & 270 \big], \\
+        \mbox{\hspace{1.3cm}} \big[ 134, & 180, & 226, & 268, & 269, & 270, & 271 \big],  \\
+        \mbox{\hspace{1.3cm}} \big[ 135, & 181, & 227, & 269, & 270, & 271, & 272 \big], \\
+        \mbox{\hspace{1.3cm}} \big[ 136, & 182, & 228, & 270, & 271, & 272, & 273 \big], \\
+        \mbox{\hspace{1.3cm}} \big[ 137, & 183, & 229, & 271, & 272, & 273, & 274 \big], \\
+        \mbox{\hspace{1.3cm}} \big[ 138, & 184, & 230, & 272, & 273, & 274, & 275 \big], \\
+        \mbox{\hspace{1.3cm}} \big[ 139, & 185, & 231, & 273, & 274, & 275, & 276 \big] \big]\end{array} \]
+    \item \textbf{long-term CNN feature:} \\ $X3 = [[138, 139, 140], [184, 185, 186], [230, 231, 232]]$ (see \ref{tab:Example-long-term-cnn-feature})
+    \item \textbf{long-term LSTM feature:} 
+    (see table \ref{tab:Example-long-term-LSTM-feature}) \newline
+    \[ \begin{array}{lllllll}
+        \mbox{$X4 = \big[ \big[$} \big[ 0, & 46, & 92, & 134, & 135, & 136, & 137 \big], \\
+        \mbox{\hspace{1.5cm}} \big[ 1, & 47, & 93, & 135, & 136, & 137, & 138 \big], \\
+        \mbox{\hspace{1.5cm}} \big[ 2, & 48, & 94, & 136, & 137, & 138, & 139 \big] \big], \\ \\
+        \mbox{\hspace{1.1cm} \big[} \big[ 46, & 92, & 138, & 180, & 181, & 182, & 183 \big], \\  
+        \mbox{\hspace{1.5cm}}\big[ 47, & 93, & 139, & 181, & 182, & 183, & 184 \big], \\
+        \mbox{\hspace{1.5cm}} \big[ 48, & 94, & 140, & 182, & 183, & 184, & 185 \big] \big], \\ \\
+        \mbox{\hspace{1.1cm} \big[} \big[ 92, & 138, & 184, & 226, & 227, & 228, & 229 \big], \\  
+        \mbox{\hspace{1.5cm}} \big[ 93, & 139, & 185, & 227, & 228, & 229, & 230 \big], \\
+        \mbox{\hspace{1.5cm}} \big[ 94, & 140, & 186, & 228, & 229, & 230, & 231 \big] \big] \big]  \end{array} \]
+\end{itemize}
+
+% Please add the following required packages to your document preamble:
+% \usepackage[table,xcdraw]{xcolor}
+% If you use beamer only pass "xcolor=table" option, i.e. \documentclass[xcolor=table]{beamer}
+\begin{table}[]
+    \begin{tabular}{llllllllllll}
+    \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}0}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}1}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}2}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}38}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}39}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}40}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}41}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}42}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}43}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}44}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}45}  \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}46}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}47}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}48}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}84}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}85}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}86}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}87}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}88}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}89}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}90}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}91}  \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}92}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}93}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}94}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}130} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}131} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}132} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}133} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}134} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}135} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}136} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}137} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}138} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}139} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}140} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}176} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}177} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}178} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}179} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}180} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}181} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}182} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}183} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}184} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}185} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}186} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}222} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}223} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}224} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}225} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}226} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}227} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}228} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}229} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}230} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}231} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}232} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}268} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}269} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCB2F}270} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCB2F}271} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCB2F}272} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCB2F}273} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCB2F}274} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCB2F}275} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFCC67}276} & \multicolumn{1}{l|}{\cellcolor[HTML]{34FF34}277} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}278} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}314} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}315} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}316} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}317} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}318} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}319} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}320} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}321} \\ \hline
+                                                      &                                                  &                                                  &                                                &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{34FF34}                         & \multicolumn{6}{l}{target timesteps}                                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{FFCC67}                         & \multicolumn{6}{l}{short-term-cnn feature X1}                                                                                                                                                                                                                                                                  
+    \end{tabular}
+    \caption{Example of short-term CNN feature at timesteps 277}
+    \label{tab:Example-short-term-CNN-feature}
+    \end{table}
+
+\begin{table}[]
+    \begin{tabular}{llllllllllll}
+    \hline
+    \multicolumn{1}{|l|}{0}                           & \multicolumn{1}{l|}{1}                           & \multicolumn{1}{l|}{2}                           & \multicolumn{1}{l|}{…}                         & \multicolumn{1}{l|}{38}                          & \multicolumn{1}{l|}{39}                          & \multicolumn{1}{l|}{40}                          & \multicolumn{1}{l|}{41}                          & \multicolumn{1}{l|}{42}                          & \multicolumn{1}{l|}{43}                          & \multicolumn{1}{l|}{44}                          & \multicolumn{1}{l|}{45}                          \\ \hline
+    \multicolumn{1}{|l|}{46}                          & \multicolumn{1}{l|}{47}                          & \multicolumn{1}{l|}{48}                          & \multicolumn{1}{l|}{…}                         & \multicolumn{1}{l|}{84}                          & \multicolumn{1}{l|}{85}                          & \multicolumn{1}{l|}{86}                          & \multicolumn{1}{l|}{87}                          & \multicolumn{1}{l|}{88}                          & \multicolumn{1}{l|}{89}                          & \multicolumn{1}{l|}{90}                          & \multicolumn{1}{l|}{91}                          \\ \hline
+    \multicolumn{1}{|l|}{92}                          & \multicolumn{1}{l|}{93}                          & \multicolumn{1}{l|}{94}                          & \multicolumn{1}{l|}{}                          & \multicolumn{1}{l|}{130}                         & \multicolumn{1}{l|}{131}                         & \multicolumn{1}{l|}{132}                         & \multicolumn{1}{l|}{133}                         & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}134} & \multicolumn{1}{l|}{135}                         & \multicolumn{1}{l|}{136}                         & \multicolumn{1}{l|}{137}                         \\ \hline
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{F8FF00}138} & \multicolumn{1}{l|}{139}                         & \multicolumn{1}{l|}{140}                         & \multicolumn{1}{l|}{…}                         & \multicolumn{1}{l|}{176}                         & \multicolumn{1}{l|}{177}                         & \multicolumn{1}{l|}{178}                         & \multicolumn{1}{l|}{179}                         & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}180} & \multicolumn{1}{l|}{181}                         & \multicolumn{1}{l|}{182}                         & \multicolumn{1}{l|}{183}                         \\ \hline
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{F8FF00}184} & \multicolumn{1}{l|}{185}                         & \multicolumn{1}{l|}{186}                         & \multicolumn{1}{l|}{…}                         & \multicolumn{1}{l|}{222}                         & \multicolumn{1}{l|}{223}                         & \multicolumn{1}{l|}{224}                         & \multicolumn{1}{l|}{225}                         & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}226} & \multicolumn{1}{l|}{227}                         & \multicolumn{1}{l|}{228}                         & \multicolumn{1}{l|}{229}                         \\ \hline
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{F8FF00}230} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}231} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}232} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}268} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}269} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}270} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}271} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFC7}272} & \multicolumn{1}{l|}{\cellcolor[HTML]{F8FF00}273} & \multicolumn{1}{l|}{\cellcolor[HTML]{F8FF00}274} & \multicolumn{1}{l|}{\cellcolor[HTML]{F8FF00}275} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{F8FF00}276} & \multicolumn{1}{l|}{\cellcolor[HTML]{34FF34}277} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}278} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}314} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}315} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}316} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}317} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}318} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}319} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}320} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}321} \\ \hline
+                                                      &                                                  &                                                  &                                                &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{34FF34}                         & \multicolumn{6}{l}{target timesteps}                                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{FFFFC7}                         & \multicolumn{6}{l}{short-term lstm feature X2{[}2{]}}                                                                                                                                                                                                                                                           \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{F8FF00}                         & \multicolumn{6}{l}{short-term lstm feature X2{[}6{]}}                                                                                                                                                                                                                                                          
+    \end{tabular}
+    \caption{Example of short-term LSTM feature of target at timesteps 277}
+    \label{tab:Example-short-term-LSTM}
+    \end{table}
+
+\begin{table}[]
+    \begin{tabular}{llllllllllll}
+    \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}0}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}1}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}2}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}38}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}39}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}40}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}41}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}42}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}43}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}44}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}45}  \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}46}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}47}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}48}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}84}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}85}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}86}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}87}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}88}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}89}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}90}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}91}  \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}92}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}93}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}94}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}130} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}131} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}132} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}133} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}134} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}135} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}136} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}137} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{38FFF8}138} & \multicolumn{1}{l|}{\cellcolor[HTML]{38FFF8}139} & \multicolumn{1}{l|}{\cellcolor[HTML]{38FFF8}140} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}176} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}177} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}178} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}179} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}180} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}181} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}182} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}183} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{00D2CB}184} & \multicolumn{1}{l|}{\cellcolor[HTML]{00D2CB}185} & \multicolumn{1}{l|}{\cellcolor[HTML]{00D2CB}186} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}222} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}223} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}224} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}225} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}226} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}227} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}228} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}229} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{329A9D}230} & \multicolumn{1}{l|}{\cellcolor[HTML]{329A9D}231} & \multicolumn{1}{l|}{\cellcolor[HTML]{329A9D}232} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}268} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}269} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}270} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}271} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}272} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}273} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}274} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}275} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}276} & \multicolumn{1}{l|}{\cellcolor[HTML]{34FF34}277} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}278} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}314} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}315} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}316} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}317} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}318} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}319} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}320} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}321} \\ \hline
+                                                      &                                                  &                                                  &                                                &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{34FF34}                         & \multicolumn{6}{l}{target timesteps}                                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{38FFF8}                         & \multicolumn{6}{l}{long-term-cnn feature X3{[}0{]}}                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{68CBD0}                         & \multicolumn{6}{l}{long-term-cnn feature X3{[}1{]}}                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{34696D}                         & \multicolumn{6}{l}{long-term-cnn feature X3{[}2{]}}                                                                                                                                                                                                                                                            
+    \end{tabular}
+    \caption{Example of long-term CNN feature at timesteps 277}
+    \label{tab:Example-long-term-cnn-feature}
+    \end{table}
+
+\begin{table}[]
+    \begin{tabular}{llllllllllll}
+    \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFCCC9}0}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}1}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}2}   & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}38}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}39}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}40}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}41}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}42}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}43}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}44}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}45}  \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFCCC9}46}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}47}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}48}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}84}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}85}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}86}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}87}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}88}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}89}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}90}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}91}  \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFCCC9}92}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}93}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}94}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}130} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}131} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}132} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}133} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCCC9}134} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCCC9}135} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCCC9}136} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFCCC9}137} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{38FFF8}138} & \multicolumn{1}{l|}{\cellcolor[HTML]{38FFF8}139} & \multicolumn{1}{l|}{\cellcolor[HTML]{38FFF8}140} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}176} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}177} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}178} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}179} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}180} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}181} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}182} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}183} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{00D2CB}184} & \multicolumn{1}{l|}{\cellcolor[HTML]{00D2CB}185} & \multicolumn{1}{l|}{\cellcolor[HTML]{00D2CB}186} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}222} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}223} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}224} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}225} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}226} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}227} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}228} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}229} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{329A9D}230} & \multicolumn{1}{l|}{\cellcolor[HTML]{329A9D}231} & \multicolumn{1}{l|}{\cellcolor[HTML]{329A9D}232} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}}  & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}268} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}269} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}270} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}271} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}272} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}273} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}274} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}275} \\ \hline
+    \rowcolor[HTML]{FFFFFF} 
+    \multicolumn{1}{|l|}{\cellcolor[HTML]{FFFFFF}276} & \multicolumn{1}{l|}{\cellcolor[HTML]{34FF34}277} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}278} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}…} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}314} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}315} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}316} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}317} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}318} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}319} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}320} & \multicolumn{1}{l|}{\cellcolor[HTML]{FFFFFF}321} \\ \hline
+                                                      &                                                  &                                                  &                                                &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  &                                                  \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{34FF34}                         & \multicolumn{6}{l}{target timesteps}                                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{38FFF8}                         & \multicolumn{6}{l}{long-term-cnn feature X3{[}0{]}}                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{68CBD0}                         & \multicolumn{6}{l}{long-term-cnn feature X3{[}1{]}}                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{34696D}                         & \multicolumn{6}{l}{long-term-cnn feature X3{[}2{]}}                                                                                                                                                                                                                                                             \\
+                                                      &                                                  &                                                  &                                                &                                                  & \cellcolor[HTML]{FFCCC9}                         & \multicolumn{6}{l}{\begin{tabular}[c]{@{}l@{}}long-term LSTM feature\\ X4{[}0,0{]}\end{tabular}}                                                                                                                                                                                                               
+    \end{tabular}
+    \caption{Example of long-term LSTM feature at timesteps 277}
+    \label{tab:Example-long-term-LSTM-feature}
+    \end{table}
+
+\subsubsection{Model architecture}
+\begin{figure}[h!]
+    \includegraphics[width=1.0\linewidth]{figures/chap4/A-CLSTM.png}
+    \caption{The architecture of A-CLSTM.}{The architecture of A-CLSTM. (a) Periodically shifted attention mechanism captures the long-term periodic dependency and temporal shifting. (b) The short-term temporal dependency is captured by ConvLSTM layer(s). (c) Joint Training to combine outputs of (a) and (b).}
+    \label{fig:chap4-architecture-A-CLSTM}
+\end{figure}
+For simplifying symbols, we set batch size $B = 1$ and ignore it in the following description (see Figure \ref{fig:chap4-architecture-A-CLSTM}).
+
+\textbf{Short-Term Temporal Dependency:}
+
+The first input, \textit{short-term CNN feature} $X1$, is fed into list $C1$ consisted of $SL$ $3 \times 3$ convolution layers with 64 filters. Then each image $X1_i$ convolves with the convolution layer $C1_i$ to generate a list of tensors with shape $(H, W, 64)$. These tensors are then concatenated to produce a tensor with shape $(SL, H, W, 64)$, which is called \textit{short-term-cnn-feature}.
+
+The second input, \textit{short-term LSTM feature} $X2$, whose shape is $(SL, H, W, FH + FL)$, is concatenated with the output of the previous step, \textit{short-term-cnn-feature}, along the last axis to output a tensor \textit{short-term-concat} with shape $(SL, H, W, FH + FL + 64)$. Then this output tensor is passed to a ConvLSTM layer(s) to capture the spatial temporal relationship in the short-term context. Note that the number 64 can be substitute by any integer number, depending on the property of our data. The purpose of these two parts is gathering more information from the nearest previous data, because of their close relevance with the target image. Moreover, the additional information from further past isn't used in the manner of extending the input sequence length as usual, but is used to extend the channel dimension. It plays an important role in making used of the annually periodic property of the hydrological data. Then the latent representation of the short-term part is computed by:
+\[ h_t = RNN(\mbox{\textit{short-term-concat}}_t, h_{t-1}), \label{equation-short-term-information}\]
+where $RNN$ is ConvLSTM layer(s). $h_t$ then has the shape $(H, W, F1)$, where $F1$ is the filter size of the last used ConvLSTM layer to compute \eqref{equation-short-term-information}. 
+
+\textbf{Periodically Shifted Attention Mechanism:}
+
+The third input, \textit{long-term CNN feature} $X3$ with shape $(P, Q, H, W)$, is handled in the similar way as \textit{short-term CNN feature}, but with the convolutional filter 32, to produce a tensor \textit{long-term-cnn-feature} with shape $(P, Q, H, W, 32)$. 
+
+The fourth input, \textit{long-term LSTM feature} $X4$ with shape $(P, Q, H, W, FH + FL)$, is concatenated with \textit{long-term-cnn-feature} along the channel axis to output a tensor with shape $(P, Q, H, W, FH + FL + 32)$ which is called \textit{long-term-concat}. Similar to \textit{short-term LSTM feature}, the number 32 can be modified as appropriate. Then for each period with index $p$ in $P$, ConvLSTM layer(s) is used to capture the hidden representation of each the relevant time in each period $\mbox{\textit{long-term-concat}}_p$. 
+
+\[ h_t^{p, q} = RNN(\mbox{\textit{long-term-concat}}_t^{p, q}, h_t^{p, q - 1}), \label{equation-long-term-information} \]
+where $h_t^{p, q}$ is the representation of time $q$ in previous year $p$ for the predicted time $t$.
+
+By using an attention mechanism, we capture the periodic property of the range of timesteps relevant to timesteps $t$ in period $p$ by computing the weighted sum of all $h_t^{p, q}$ (\eqref{equation:attension-general}) in period $p$ ($h_t^{p, 0}$, $h_t^{p, 1}$,\dots,$h_t^{p, q-1}$).
+\[ h_t^p = \sum_{q \in Q}{\alpha_t^{p,q} h_t^{p,q}}, \label{equation:attension-general} \]
+where weight $\alpha_t^{p,q}$ indicates how much the value of $h_t^{p,q}$ contributes to the value of $h_t^p$. A way to compute $\alpha_t^{p,q}$ is computing the softmax of score indicating the similarity between the previous hidden state $h_t^{p,q}$ and the short-term information $h_t$ (\eqref{equation-short-term-information}). Let $score(h_t^{p,q}, h_t)$ be the selected similarity, the following function is adopted to compute $score$: \cite{DBLP:journals/corr/LuongPM15}
+\[ score(h_t^{p,q}, h_t) = v^T\tanh(W_H h_t^{p,q} + W_X h_t + b_X), \]
+where $W_H, W_X, b_X \mbox{ and } v$ are learnable parameters, $v^T$ denotes the transpose of $v$. Then $\alpha_t^{p,q}$ is formulated as:
+\[ \alpha_t^{p,q} = \frac{\exp(score(h_t^{p,q}, h_t))}{\sum_{q \in Q}{\exp(score(h_t^{p,q}, h_t))}}. \]
+For each previous period $p$, we get the periodic representation $h_t^p$ by \eqref{equation:attension-general}. After that, we adopt another ConvLSTM layer(s) to summary the long-term periodic information:
+\[ \hat{h}_t^p = RNN(h_t^p, \hat{h}_t^{p-1}) \]
+The last time $\hat{h}_t^P$ represents the periodic property of temporal data in a shape of $(H, W, F2)$, where $F2$ is the filter size of the last used ConvLSTM layer to compute $\hat{h}_t^P$.
+
+\textbf{Joint Training:}
+Long-term periodic information $\hat{h}_t^P$ and short-term information $h_t$ are concatenated along the channel axis to produce $h_t^c$ which includes both long-term and short-term spatial temporal data. Notice that $h_t^c$ has the shape of $(H, W, F1 + F2)$. Finally, a 2D convolution layer with kernel size 3 and filter 1 is applied on $h_t^c$ to receive the final prediction $\hat{X}_{t+1}$.
+\[ \hat{X}_{t+1} = Conv2D(h_t^c) \]
+
+\textbf{Loss Function:} We use L2 loss to train and monitor the validation. 
+
+\section{Experiments}
+We compare the performance of our method with ConvLSTM and with a new method in video prediction, PredRNN++ \cite{wang2018predrnn}. 
+
+\subsection{Experimental Settings}
+\subsubsection{Data Preprocessing and Data Augmentation}
+First we download all MODIS Terra and Aqua in Tonle Sap lake region from 26/6/2002 to 31/12/2017 (subsection \ref{subsection-used-data}). Then, before generating four inputs for each target image from timesteps $t_0 = (FH + P)*S + Q/2$, we extract band NDVI of these images. The fill value of band NDVI is substituted from -3000 to -2001 to increase the continuity of data (see here\footnote{\url{https://lpdaac.usgs.gov/products/mod13q1v006/}} and here\footnote{\url{https://lpdaac.usgs.gov/products/myd13q1v006/}} for more information of MOD13Q1 and MYD13Q1 data). Then we concatenate these NDVI data in the order of time and then scale them to range $[0,1]$ by min-max normalization (min and max value are min and max of data from 2002 to 2015, corresponding to the range of training data). After that we have a tensor of NDVI data with shape $(714 \times 513 \times 513)$. The threshold for classifying a pixel to be water or not is now:
+\[(0.1 - (-0.2001)) / (1.0 -(-0.2001)) \approx 0.2500624947921007
+\] 
+
+\subsubsection{Implementation Details}
+We implement our method with Tensorflow 1.12 \cite{tensorflow2015-whitepaper}. For training the model, we used Adam \cite{article:Adam-optimization} with the mini-batch of 8 inputs. The training was done in a machine equipped with Intel Xeon E5-2650, 377GB RAM, one Nvidia Tesla P100 and CUDA 9.0. In training and validation phase, we choose patch training strategy in order to increase the amount of training data and speed up training time (we only extract patches whose centers lie on the lake's boundary. For more information of how patches are extracted, see section \ref{Supplementary}). The selected patch size is \textit{32}, in order to speed up training process while also guaranteeing the spatial structure of satellite image data. When testing, we adopt and evaluate our model by two different approaches: inferencing model on whole image data or inferencing model on patches on a grid and combining them to yield the final predicted image. For simplicity, we abbreviate these two approaches as $A-CLSTM$ and $A-CLSTM-G32$ respectively according to inferencing on whole images or on patches.  
+
+\subsubsection{Baselines}
+For comparison, we completed the following baseline models:
+\begin{itemize}
+    \item \textbf{ConvLSTM}: We use four stacked ConvLSTM layers with filter sizes 128, 64, 64, 1 respectively.
+    \item \textbf{PredRNN++}: We use PredRNN++ with all hyperparameters mentioned in the paper \cite{wang2018predrnn}.
+\end{itemize}
+
+\subsection{Evaluation measures}
+\begin{itemize}
+    \item \textbf{Mean Squared Error (MSE)} that is the mean squared error of predicted and groundtruth image. It is also the loss function when training our model.
+    \item \textbf{Structural Similarity (SSIM)} \cite{Wang:2004:IQA:2319031.2320551} that is used for measuring the similarity between two images.
+    \item \textbf{Normalized Root Mean Squared Error of Predicted Water area ($W\_NRMSE$)} that is the division of $W\_RMSE$ and mean of water area array of images in the test set, where $W\_RMSE$ is calculated by: first we extract mask of lake's water pixel of 2D groundtruth and predicted image (see algorithms described in section \ref{Supplementary}); then we obtain the total number of water pixels of these two images by counting the number of 1-value elements of each mask; and last, water area is derived by product of the number of the water pixels and $0.25^2 km^2$ (pixel size of a MODIS Terra/Aqua image data). $W\_RMSE$ is the root mean squared error between groundtruth and predicted water area arrays.
+\end{itemize}
+The following three metrics are commonly-used metrics in classification problems. Especially, the two latter are more robust on imbalanced classification problems, which is more suitable for the problem in this chapter \footnotetext{By using a simple counting, we notice that the number of lake's water pixels only takes about 17\% in the total pixels of an image.}.
+All of these metrics are computed by flatten groundtruth and predicted image (or sequence of images, in term of multiple steps prediction) into two 1D arrays, then apply these metrics' formula to archive scores. In experiments, we use \texttt{sklearn.metrics} module of Scikit-learn library \cite{scikit-learn}. These metrics are defined as:
+\begin{itemize}
+    \item \textbf{F1-Score} that is harmomic mean of precision and recall.
+    \item \textbf{Area under the Precision-Recall Curve (PR-AUC)} that summarizes a precision-recall curve as the weighted mean of precisions achieved at each threshold, with the increase in recall from the previous threshold used as the weight:
+    \[ \texttt{PR-AUC} = \sum_n{(R_n - R_{n-1})}{P_n}, \]
+    where $P_n$ and $R_n$ are the precision and recall at the nth threshold. PR-AUC is a better metric for our goal given that the dataset is class-imbalanced \cite{article:precision-recall-plot}.
+    \item \textbf{Receiver Operating Characteristic (ROC)} Another implementation to approximate Area Under the Precsion-Recall Curve.
+\end{itemize}
+
+\subsection{Results}
+
+\begin{table}[h]\footnotesize
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|}
+    \hline
+    \textbf{Metrics}               & \textbf{\begin{tabular}[c]{@{}c@{}}Steps\\ Predict\end{tabular}} & \textbf{ConvLSTM}                                                   & \textbf{PredRNN++}                                                  & \textbf{A-CLSTM}                                          & \textbf{A-CLSTM-G32}                                              \\ \hline
+    \multirow{4}{*}{\textbf{MSE}}  & 1                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.0105\\  (0.0073)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0103 \\ (0.0072)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.0152\\  (0.0065)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.0111 \\ (0.0074)\end{tabular}          \\ \cline{2-6} 
+                                   & 3                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.0109 \\ (0.0067)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.011\\  (0.0066)\end{tabular}}  & \begin{tabular}[c]{@{}c@{}}0.0238 \\ (0.0084)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.0116 \\ (0.0063)\end{tabular}          \\ \cline{2-6} 
+                                   & 10                                                               & \textbf{\begin{tabular}[c]{@{}c@{}}0.0152 \\ (0.0062)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.0176 \\ (0.0067)\end{tabular}          & \begin{tabular}[c]{@{}c@{}}0.0476 \\ (0.0135)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0161 \\ (0.0053)\end{tabular}} \\ \cline{2-6} 
+                                   & 20                                                               & \textbf{\begin{tabular}[c]{@{}c@{}}0.0174 \\ (0.0041)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.022 \\ (0.0054)\end{tabular}           & \begin{tabular}[c]{@{}c@{}}0.0582 \\ (0.0129)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0187 \\ (0.004)\end{tabular}}  \\ \hline
+    \multirow{4}{*}{\textbf{SSIM}} & 1                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.5912 \\ (0.1352)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.5835\\  (0.1369)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.5418 \\ (0.1368)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.5625 \\ (0.1281)\end{tabular}          \\ \cline{2-6} 
+                                   & 3                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.59 \\ (0.1191)\end{tabular}}   & \textbf{\begin{tabular}[c]{@{}c@{}}0.5754\\  (0.1223)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.5127\\  (0.121)\end{tabular}  & \begin{tabular}[c]{@{}c@{}}0.5488 \\ (0.1078)\end{tabular}          \\ \cline{2-6} 
+                                   & 10                                                               & \textbf{\begin{tabular}[c]{@{}c@{}}0.523 \\ (0.0932)\end{tabular}}  & \textbf{\begin{tabular}[c]{@{}c@{}}0.4869 \\ (0.1044)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.3869 \\ (0.0972)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.4583 \\ (0.0812)\end{tabular}          \\ \cline{2-6} 
+                                   & 20                                                               & \textbf{\begin{tabular}[c]{@{}c@{}}0.4849 \\ (0.0592)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.4347 \\ (0.0739)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.3162 \\ (0.0709)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.4027 \\ (0.0534)\end{tabular}          \\ \hline
+    \end{tabular}
+    \caption{Tonle Sap lake hydrological prediction performance in term of regression metrics. With regard to SSIM, higher score is better. Otherwise, lower MSE shows a better performance.}
+    \label{tab:chap4-regression-metrics}
+\end{table}
+
+
+\begin{table}[h]\footnotesize
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|}
+    \hline
+    \textbf{Metrics}                    & \textbf{\begin{tabular}[c]{@{}c@{}}Steps \\ Predict\end{tabular}} & \textbf{ConvLSTM}                                                   & \textbf{PredRNN++}                                         & \textbf{A-CLSTM}                                                   & \textbf{A-CLSTM-G32}                                              \\ \hline
+    \multirow{4}{*}{\textbf{W\_NRMSE}}  & 1                                                                 & \begin{tabular}[c]{@{}c@{}}0.0138 \\ (0.0158)\end{tabular}          & \begin{tabular}[c]{@{}c@{}}0.0137\\  (0.0148)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0103 \\ (0.0129)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0118 \\ (0.0141)\end{tabular}} \\ \cline{2-6} 
+                                        & 3                                                                 & \begin{tabular}[c]{@{}c@{}}0.015 \\ (0.0158)\end{tabular}           & \begin{tabular}[c]{@{}c@{}}0.0217 \\ (0.0171)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0099 \\ (0.0073)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0102 \\ (0.0093)\end{tabular}} \\ \cline{2-6} 
+                                        & 10                                                                & \begin{tabular}[c]{@{}c@{}}0.0233 \\ (0.0187)\end{tabular}          & \begin{tabular}[c]{@{}c@{}}0.0473 \\ (0.0262)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0195 \\ (0.0134)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.0143 \\ (0.0118)\end{tabular}} \\ \cline{2-6} 
+                                        & 20                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.0315 \\ (0.0167)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.0699 \\ (0.0302)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.0345 \\ (0.0248)\end{tabular}          & \textbf{\begin{tabular}[c]{@{}c@{}}0.0216 \\ (0.0181)\end{tabular}} \\ \hline
+    \multirow{4}{*}{\textbf{F1-Score}} & 1                                                                 & \begin{tabular}[c]{@{}c@{}}0.987 \\ (0.0095)\end{tabular}           & \begin{tabular}[c]{@{}c@{}}0.9867 \\ (0.0089)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9872 \\ (0.009)\end{tabular}}  & \textbf{\begin{tabular}[c]{@{}c@{}}0.987\\  (0.0089)\end{tabular}}  \\ \cline{2-6} 
+                                        & 3                                                                 & \begin{tabular}[c]{@{}c@{}}0.9872 \\ (0.0093)\end{tabular}          & \begin{tabular}[c]{@{}c@{}}0.9848\\  (0.0091)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9872\\  (0.0087)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9877 \\ (0.0081)\end{tabular}} \\ \cline{2-6} 
+                                        & 10                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.9831 \\ (0.0099)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.9732 \\ (0.0127)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.9789 \\ (0.0142)\end{tabular}          & \textbf{\begin{tabular}[c]{@{}c@{}}0.9845 \\ (0.009)\end{tabular}}  \\ \cline{2-6} 
+                                        & 20                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.9786 \\ (0.0079)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.9623 \\ (0.0145)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.9662 \\ (0.0204)\end{tabular}          & \textbf{\begin{tabular}[c]{@{}c@{}}0.9803\\  (0.0089)\end{tabular}} \\ \hline
+    \multirow{4}{*}{\textbf{ROC-AUC}}  & 1                                                                 & \begin{tabular}[c]{@{}c@{}}0.9906 \\ (0.0086)\end{tabular}          & \begin{tabular}[c]{@{}c@{}}0.9897\\  (0.0077)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9916 \\ (0.0072)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9907 \\ (0.0077)\end{tabular}} \\ \cline{2-6} 
+                                        & 3                                                                 & \begin{tabular}[c]{@{}c@{}}0.9909 \\ (0.009)\end{tabular}           & \begin{tabular}[c]{@{}c@{}}0.9869 \\ (0.0085)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9923 \\ (0.0067)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9917 \\ (0.0065)\end{tabular}} \\ \cline{2-6} 
+                                        & 10                                                                & \begin{tabular}[c]{@{}c@{}}0.9878 \\ (0.0106)\end{tabular}          & \begin{tabular}[c]{@{}c@{}}0.9751\\  (0.0119)\end{tabular} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9882 \\ (0.0099)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}c@{}}0.9891 \\ (0.0074)\end{tabular}} \\ \cline{2-6} 
+                                        & 20                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.984 \\ (0.0098)\end{tabular}}  & \begin{tabular}[c]{@{}c@{}}0.9648 \\ (0.0134)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.981 \\ (0.0139)\end{tabular}           & \textbf{\begin{tabular}[c]{@{}c@{}}0.9851 \\ (0.0086)\end{tabular}} \\ \hline
+    \multirow{4}{*}{\textbf{PR-AUC}}   & 1                                                                 & \textbf{\begin{tabular}[c]{@{}c@{}}0.9773 \\ (0.0156)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.9772 \\ (0.0147)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.9772 \\ (0.0155)\end{tabular}          & \textbf{\begin{tabular}[c]{@{}c@{}}0.9773 \\ (0.0148)\end{tabular}} \\ \cline{2-6} 
+                                        & 3                                                                 & \textbf{\begin{tabular}[c]{@{}c@{}}0.9777 \\ (0.0148)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.9745 \\ (0.0145)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.9769 \\ (0.015)\end{tabular}           & \textbf{\begin{tabular}[c]{@{}c@{}}0.9782 \\ (0.0138)\end{tabular}} \\ \cline{2-6} 
+                                        & 10                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.9707 \\ (0.0153)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.9568\\  (0.0192)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.962\\  (0.0243)\end{tabular}           & \textbf{\begin{tabular}[c]{@{}c@{}}0.9729 \\ (0.015)\end{tabular}}  \\ \cline{2-6} 
+                                        & 20                                                                & \textbf{\begin{tabular}[c]{@{}c@{}}0.9637 \\ (0.0113)\end{tabular}} & \begin{tabular}[c]{@{}c@{}}0.9406 \\ (0.0213)\end{tabular} & \begin{tabular}[c]{@{}c@{}}0.9405 \\ (0.0341)\end{tabular}          & \textbf{\begin{tabular}[c]{@{}c@{}}0.9664 \\ (0.0139)\end{tabular}} \\ \hline
+    \end{tabular}
+    \caption{Tonle Sap lake hydrological prediction performance in term of classification metrics. With regard to  W\_NRMSE, lower score is better. Otherwise, higher F1-Score, ROC-AUC and PR-AUC show a better performance.}
+    \label{tab:chap4-classification-metrics}
+\end{table}
+
+We evaluate the prediction performance of all models in both term of regression and classification. The regression results are reported in Table \ref{tab:chap4-regression-metrics} and classification results are reported in Table \ref{tab:chap4-classification-metrics}. In each row of these two tables, we bold the two best metric values to emphasize the comparisons. Numbers outside and inside parentheses of both tables are metric's mean and metric's standard deviation on the test set, respectively. 
+
+Table \ref{tab:chap4-regression-metrics} shows that our methods yield a higher loss and lower structural similarity than the traditional ConvLSTM model. PredRNN++ performs better in short-term prediction, and its results decrease dramatically when the number of prediction steps increases. The under-expected regression score of the whole-image inference approach (A-CLSTM) and a comparable regression score of A-CLSTM-G32 indicate that applying attention mechanism only on the channel axis cannot guarantee the performance when the input tensors in testing phase have different shape with those in the training data. 
+
+In contrast with the low regression scores, as we see in Table \ref{tab:chap4-classification-metrics}, our methods, especially A-CLSTM-G32, perform better in classification metrics than traditional RNN methods. The difference of classification metrics across multiple methods lies principally on the neighbor region of the lake's boundary, rather than the lake's permanent water region and the far outside lake's region. The better performance of our methods demonstrates that they are more suitable for lake's hydrological prediction, which is the primary goal of this work.
+
+The dramatic decreasing in almost all metrics of PredRNN++ across number of predicted steps indicates that it isn't suitable for capturing long-term temporal property of hydrological data. A-CLSTM-G32 archives the first rank at almost all cases, and always in the top two best performance, shows that A-CLSTM-G32 can properly capture the temporal classification of lake's shoreline region. Figure \ref{fig:metrics-comparisons-timesteps-1} and \ref{fig:metrics-comparisons-timesteps-2} show mean of metrics of each predicted image at each timesteps (metric values in Table \ref{tab:chap4-regression-metrics} and Table \ref{tab:chap4-classification-metrics} are mean across all timesteps in one prediction). We can see that A-CLSTM-G32 performs better than others in all four metrics: W\_NRMSE,  F1-Score, PR-AUC and ROC-AUC at almost all timesteps, which demonstrates a prospective ability of A-CLSTM-G32 in lake's water body prediction problem.
+
+\begin{figure}[h!]
+    \begin{center}
+    \begin{tabular}[b]{c}
+      \input{figures/chap4/w_nrmse_timesteps.pgf} \\
+      \small (a) Water NRMSE (lower is better)
+    \end{tabular}
+    \begin{tabular}[b]{c}
+      \input{figures/chap4/f1_score_timesteps.pgf} \\
+      \small (b) F1-Score (higher is better)
+    \end{tabular}
+    \end{center}
+    \caption{Comparisons of Water NRMSE and F1-Score at each timesteps of multiple methods}
+\label{fig:metrics-comparisons-timesteps-1}
+\end{figure}
+
+\begin{figure}[h!]
+    \begin{center}
+    \begin{tabular}[b]{c}
+        \input{figures/chap4/pr_auc_timesteps.pgf} \\
+        \small (a) PR-AUC (higher is better)
+    \end{tabular} 
+    \begin{tabular}[b]{c}
+        \input{figures/chap4/roc_auc_timesteps.pgf} \\
+        \small (b) ROC-AUC (higher is better)
+    \end{tabular}
+    \end{center}
+    \caption{Comparisons of PR-AUC and ROC-AUC at each timesteps of multiple methods}
+    \label{fig:metrics-comparisons-timesteps-2}
+\end{figure}
+
+In Figure \ref{fig:chap4-test-30-1}, we show an example of the groundtruth and predicted images and the metrics plot of this example (Figures \ref{fig:chap4-test-30-2} and \ref{fig:chap4-test-30-3}). Models predict 10 timesteps in the future. This test is at timesteps 241 of year 2016, which is from 21 August to 28 August 2016. As we see in this figure, both attention methods yield better results in all 4 classification metrics. Especially in long-term prediction, A-CLSTM-G32 outperforms others in all metrics. It demonstrates that a appropriate adoption of attention mechanism is able to improve traditional ConvLSTM to remember better the periodic property of hydrological data.  
+
+\begin{SCfigure}
+    \includegraphics[width=.7\linewidth]{figures/chap4/10/30/groundtruth-predict-imgs.png}
+    \caption{Example of 10 timesteps prediction at 21-28 August, 2016.}
+    \label{fig:chap4-test-30-1}
+\end{SCfigure}
+
+\begin{figure}
+    \begin{center}
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/30/w_nrmse.pgf} \\
+            \small (a) Water NRMSE (Lower is better)
+        \end{tabular}
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/30/f1_score.pgf} \\
+            \small (b) F1-Score (Higher is better)
+        \end{tabular}
+    \end{center}
+    \caption{Water NRMSE and F1-Score of 10 timesteps prediction at 21-28 August, 2016.}
+    \label{fig:chap4-test-30-2}
+\end{figure}
+
+\begin{figure}
+    \begin{center}
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/30/pr_auc.pgf} \\
+            \small (a) PR-AUC (Higher is better)
+        \end{tabular} 
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/30/roc_auc.pgf} \\
+            \small (b) ROC-AUC (Higher is better)
+        \end{tabular}
+    \end{center}
+    \caption{Water PR-AUC and ROC-AUC of 10 timesteps prediction at 21-28 August, 2016.}
+    \label{fig:chap4-test-30-3}
+\end{figure}
+
+
+\begin{figure}
+    \begin{center}
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/w_nrmse_all_tests.pgf} \\
+            \small (a) Water NRMSE (Lower is better)
+        \end{tabular} 
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/f1_score_all_tests.pgf} \\
+            \small (b) F1-Score (Higher is better)
+        \end{tabular}
+    \end{center}
+    \caption{Average performance of Water NRMSE and F1-Score across all tests of 10 timesteps prediction}
+    \label{fig:chap4-performance-all-tests-1}
+\end{figure}
+
+\begin{figure}
+    \begin{center}
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/pr_auc_all_tests.pgf} \\
+            \small (a) PR-AUC (Higher is better)
+        \end{tabular} 
+        \begin{tabular}[b]{c}
+            \input{figures/chap4/10/roc_auc_all_tests.pgf} \\
+            \small (b) ROC-AUC (Higher is better)
+        \end{tabular}
+    \end{center}
+    \caption{Average performance of PR-AUC and ROC-AUC across all tests of 10 timesteps prediction}
+    \label{fig:chap4-performance-all-tests-2}
+\end{figure}
+
+Figure \ref{fig:chap4-performance-all-tests-1} and Figure \ref{fig:chap4-performance-all-tests-2} indicate the performance of all methods in all metrics at all tests. These visualization show that all methods yield worse results in tests 25 to 35, which are from July to September 2016. This time is in the wet season at Mekong Region \cite{article:Water-balance-analysis-TonleSap}, where flooding and the associated water level increase in the Mekong River causes the Tonle Sap River to change flow direction and flow towards the northwest (upstream) into Tonle Sap Lake (see Figure \ref{fig:chap4-tonlesap-avg-area}). In term of Water Area NRMSE, A-CLSTM-G32 archives a more stable result than other methods. The NRMSE line of A-CLSTM-G32 is the lowest through time and is also the smoothest one. In the last three metrics, the line plot of A-CLSTM-G32 is smoother and overally higher than the others. All of them show that the adequate simplicity of the attention mechanism (due to its linearity transformation) makes significant contributions in improving result of time-series prediction problems, especially in term of periodic data as hydrological data.
+
+\begin{SCfigure}
+    \caption{Monthly average water level of Tonle Sap Lake at Kampong Luong (continuous line – right vertical axis) and inundated area (circles – left vertical axis). The observed minimum and maximum monthly average water levels have been illustrated with dotted bars.}
+    \includegraphics[width=.6\textwidth]{figures/chap4/tonlesap_avg_area_with_floodplain.png} \cite{article:Water-balance-analysis-TonleSap}
+    \label{fig:chap4-tonlesap-avg-area}
+\end{SCfigure}
+
+
+\section{Conclusions}
+We have developed a model that can predict the next MODIS NDVI band with a high focus on lake's water body. The model consists of a single neural network that takes a well-organized set of historical MODIS NDVI bands and is trained end-to-end under the supervisor of ConvLSTM and an attention mechanism. Our evaluation shows strong performances of our method (A-CLSTM-G32) compared to previous methods in classification metrics. One the other hand, one of the limitations of the model is that we still have low performances on regression metrics. In addition, whether this approach can be used in higher resolution satellite image, such as Landsat or Sentinel-1 data, is still a controversy and is also a potential research subject. 
+
+
+\section{Supplementary}
+\label{Supplementary}
+In this section we describe in detail algorithms used for extracting lake's water body.
+
+\begin{algorithm}
+    \caption{mask\_lake\_img}
+    \begin{algorithmic}[1]
+        \Inputs{\begin{itemize}
+                \item{$(X)$: Tensor with shape ($H,W$),}
+                \item{$water\_threshold$: Double scalar which is threshold of pixel value to be considered as water.}
+            \end{itemize}}
+        \Outputs{$M$: 0-1 Tensor, with shape ($H,W$): Mask tensor, \\ \quad \quad 1 if the pixel is on lake boundary and 0 otherwise.}
+        \newline
+        \State $masks \gets$ classify\_by\_threshold($X$)
+        \State{$labels \gets$ find\_connected\_elements($mask$)}
+        \Returns{largest\_connected\_elements($labels$)}
+    \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+    \caption{find\_boundary\_mask\_lake}
+    \begin{algorithmic}[1]
+        \Inputs{\begin{itemize}
+            \item{$(X)$: Tensor with shape ($H,W$),}
+            \item{$water\_threshold$: Double scalar which is threshold of pixel value to be considered as water.}
+        \end{itemize}}
+        \Outputs{$M$: 0-1 Tensor, with shape ($H,W$): Mask tensor,\\ \quad \quad if the pixel is on lake 1 if pixel is on lake boundary and 0 otherwise.}
+        \newline        
+        \State $X_1 \gets$ mask\_lake\_img($X, water\_threshold$)
+        \Returns{find\_boundaries($X_1$)}
+    \end{algorithmic}
+\end{algorithm}
+
